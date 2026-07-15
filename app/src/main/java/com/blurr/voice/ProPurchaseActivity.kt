@@ -25,5 +25,5 @@ class ProPurchaseActivity : BaseNavigationActivity() {
 
     override fun getContentLayoutId(): Int = R.layout.activity_pro_purchase
 
-    override fun getCurrentNavItem(): NavItem = BaseNavigationActivity.NavItem.UPGRADE
+    override fun getCurrentNavItem(): NavItem = BaseNavigationActivity.NavItem.SETTINGS
 }

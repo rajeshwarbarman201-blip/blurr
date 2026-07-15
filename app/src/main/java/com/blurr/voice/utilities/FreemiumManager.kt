@@ -2,23 +2,19 @@ package com.blurr.voice.utilities
 
 class FreemiumManager {
 
-    companion object {
-        const val DAILY_TASK_LIMIT = 15L
-    }
-
     suspend fun getDeveloperMessage(): String = ""
 
-    suspend fun isUserSubscribed(): Boolean = false
+    suspend fun isUserSubscribed(): Boolean = true
 
     suspend fun provisionUserIfNeeded() {
-        // Local-only build: no remote user provisioning.
+        // Local-only build: no remote user provisioning required.
     }
 
-    suspend fun getTasksRemaining(): Long? = DAILY_TASK_LIMIT
+    suspend fun getTasksRemaining(): Long? = null
 
     suspend fun canPerformTask(): Boolean = true
 
     suspend fun decrementTaskCount() {
-        // Local-only build: no subscription or quota tracking.
+        // Local-only build: no task quota tracking.
     }
 }

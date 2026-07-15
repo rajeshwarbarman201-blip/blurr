@@ -623,16 +623,11 @@ class ConversationalAgentService : Service() {
                                 trackMessage("model", decision.reply, "task_confirmation")
                                 gracefulShutdown(decision.reply, "task_executed")
                             }
-                        }else{
-                            Log.w("ConvAgent", "User has no tasks remaining. Denying request.")
-                            
-                            // Track freemium limit reached
-                            Log.d("ConvAgent", "Task rejected due to freemium limit")
-                            
-                            val upgradeMessage = "Hey! You've used all your free tasks for the month. Please upgrade in the app to unlock more. We can still talk in voice mode."
-                            conversationHistory = addResponse("model", upgradeMessage, conversationHistory)
-                            trackMessage("model", upgradeMessage, "freemium_limit")
-                            speakAndThenListen(upgradeMessage)
+                        } else {
+                            Log.d("ConvAgent", "Task execution allowed without task limits in this local build.")
+                            AgentService.start(applicationContext, decision.instruction)
+                            trackMessage("model", decision.reply, "task_confirmation")
+                            gracefulShutdown(decision.reply, "task_executed")
                         }
                     }
                     "KillTask" -> {

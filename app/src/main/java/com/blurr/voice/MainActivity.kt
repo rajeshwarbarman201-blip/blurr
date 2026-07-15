@@ -461,11 +461,13 @@ class MainActivity : BaseNavigationActivity() {
     private fun updateTaskCounter() {
         lifecycleScope.launch {
             val isUserSub = freemiumManager.isUserSubscribed()
-            if(isUserSub){
+            if (isUserSub) {
                 tasksLeftTag.visibility = View.GONE
+            } else {
+                tasksLeftTag.visibility = View.VISIBLE
             }
             val tasksLeft = freemiumManager.getTasksRemaining()
-            tasksLeftText.text = "$tasksLeft tasks left"
+            tasksLeftText.text = if (tasksLeft == null) "Unlimited tasks" else "$tasksLeft tasks left"
         }
     }
 
@@ -478,19 +480,14 @@ class MainActivity : BaseNavigationActivity() {
                     Logger.w("MainActivity", "pro_banner view not found in updateBillingStatus")
                     return@launch
                 }
-                if (isSubscribed) {
-                    proSubscriptionTag.visibility = View.VISIBLE
-                    proBanner.visibility = View.GONE
-                } else {
-                    proSubscriptionTag.visibility = View.GONE
-                    proBanner.visibility = View.VISIBLE
-                }
+                proSubscriptionTag.visibility = if (isSubscribed) View.VISIBLE else View.GONE
+                proBanner.visibility = View.GONE
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error updating billing status", e)
                 proSubscriptionTag.visibility = View.GONE
                 val proBanner = findViewById<View>(R.id.pro_upgrade_banner)
                 if (proBanner != null) {
-                    proBanner.visibility = View.VISIBLE
+                    proBanner.visibility = View.GONE
                 } else {
                     Logger.w("MainActivity", "pro_banner view not found in error handler")
                 }
@@ -550,7 +547,7 @@ class MainActivity : BaseNavigationActivity() {
     }
 
     private suspend fun updateUserToPro() {
-        Logger.d("MainActivity", "Subscription updates are disabled in this local build.")
+        Logger.d("MainActivity", "Subscription handling is disabled in this local build.")
     }
 
     private fun displayDeveloperMessage() {
@@ -565,7 +562,7 @@ class MainActivity : BaseNavigationActivity() {
                     return
                 }
 
-                val message = "Panda is running in a local, no-subscription build."
+                val message = "Panda is running in an unlocked local build."
                 if (message.isNotEmpty()) {
                     val dialog = AlertDialog.Builder(this@MainActivity)
                         .setTitle("Message from Developer")
