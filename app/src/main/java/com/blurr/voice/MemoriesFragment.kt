@@ -19,9 +19,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.blurr.voice.data.UserMemory
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Date
 import java.util.UUID
 
@@ -32,8 +29,7 @@ class MemoriesFragment : Fragment() {
     private lateinit var addMemoryFab: FloatingActionButton
     private lateinit var memoriesAdapter: MemoriesAdapter
 
-    private val db = FirebaseFirestore.getInstance()
-    private val auth = FirebaseAuth.getInstance()
+    private val localMemories = mutableListOf<UserMemory>()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -109,47 +105,7 @@ class MemoriesFragment : Fragment() {
     }
 
     private fun loadMemories() {
-        val user = auth.currentUser
-        if (user == null) {
-            updateUI(emptyList())
-            return
-        }
-
-        val docRef = db.collection("users").document(user.uid)
-        docRef.addSnapshotListener { snapshot, e ->
-            if (e != null) {
-                Log.w("MemoriesFragment", "Listen failed.", e)
-                return@addSnapshotListener
-            }
-
-            if (snapshot != null && snapshot.exists()) {
-                val memoriesList = mutableListOf<UserMemory>()
-                val memoriesData = snapshot.get("memories") as? List<Map<String, Any>>
-
-                memoriesData?.forEach { map ->
-                    try {
-                        val timestamp = map["createdAt"] as? com.google.firebase.Timestamp
-                        val date = timestamp?.toDate() ?: Date()
-
-                        val memory = UserMemory(
-                            id = map["id"] as? String ?: "",
-                            text = map["text"] as? String ?: "",
-                            source = map["source"] as? String ?: "User",
-                            createdAt = date
-                        )
-                        memoriesList.add(memory)
-                    } catch (e: Exception) {
-                        Log.e("MemoriesFragment", "Error parsing memory", e)
-                    }
-                }
-
-                // Sort by date descending
-                memoriesList.sortByDescending { it.createdAt }
-                updateUI(memoriesList)
-            } else {
-                updateUI(emptyList())
-            }
-        }
+        updateUI(localMemories.sortedByDescending { it.createdAt })
     }
 
     private fun updateUI(memories: List<UserMemory>) {
@@ -209,58 +165,25 @@ class MemoriesFragment : Fragment() {
     }
 
     private fun addMemory(memoryText: String) {
-        val user = auth.currentUser ?: return
         val newMemory = UserMemory(
             id = UUID.randomUUID().toString(),
             text = memoryText,
             source = "User",
             createdAt = Date()
         )
-
-        val docRef = db.collection("users").document(user.uid)
-
-        val memoryMap = hashMapOf(
-            "id" to newMemory.id,
-            "text" to newMemory.text,
-            "source" to newMemory.source,
-            "createdAt" to newMemory.createdAt
-        )
-
-        docRef.update("memories", FieldValue.arrayUnion(memoryMap))
-            .addOnSuccessListener {
-                Toast.makeText(requireContext(), "Memory added", Toast.LENGTH_SHORT).show()
-            }
-            .addOnFailureListener { e ->
-                Log.e("MemoriesFragment", "Error adding memory", e)
-                Toast.makeText(requireContext(), "Failed to add memory", Toast.LENGTH_SHORT).show()
-            }
+        localMemories.add(newMemory)
+        localMemories.sortByDescending { it.createdAt }
+        updateUI(localMemories)
+        Toast.makeText(requireContext(), "Memory added", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateMemory(oldMemory: UserMemory, newText: String) {
-        val user = auth.currentUser ?: return
-        val docRef = db.collection("users").document(user.uid)
-
-        db.runTransaction { transaction ->
-            val snapshot = transaction.get(docRef)
-            val memories = snapshot.get("memories") as? MutableList<Map<String, Any>> ?: mutableListOf()
-
-            // Find the memory with the same ID
-            val index = memories.indexOfFirst { it["id"] == oldMemory.id }
-            if (index != -1) {
-                val newMemoryMap = hashMapOf(
-                    "id" to oldMemory.id,
-                    "text" to newText,
-                    "source" to oldMemory.source,
-                    "createdAt" to oldMemory.createdAt // Keep original creation date
-                )
-                memories[index] = newMemoryMap
-                transaction.update(docRef, "memories", memories)
-            }
-        }.addOnSuccessListener {
+        val index = localMemories.indexOfFirst { it.id == oldMemory.id }
+        if (index != -1) {
+            localMemories[index] = oldMemory.copy(text = newText)
+            localMemories.sortByDescending { it.createdAt }
+            updateUI(localMemories)
             Toast.makeText(requireContext(), "Memory updated", Toast.LENGTH_SHORT).show()
-        }.addOnFailureListener { e ->
-            Log.e("MemoriesFragment", "Error updating memory", e)
-            Toast.makeText(requireContext(), "Failed to update memory", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -280,25 +203,9 @@ class MemoriesFragment : Fragment() {
     }
 
     private fun deleteMemory(memory: UserMemory) {
-        val user = auth.currentUser ?: return
-        val docRef = db.collection("users").document(user.uid)
-
-        db.runTransaction { transaction ->
-            val snapshot = transaction.get(docRef)
-            val memories = snapshot.get("memories") as? MutableList<Map<String, Any>> ?: mutableListOf()
-
-            val index = memories.indexOfFirst { it["id"] == memory.id }
-            if (index != -1) {
-                memories.removeAt(index)
-                transaction.update(docRef, "memories", memories)
-            }
-        }.addOnSuccessListener {
-            showSnackbar("Memory deleted")
-        }.addOnFailureListener { e ->
-            Log.e("MemoriesFragment", "Error deleting memory", e)
-            Toast.makeText(requireContext(), "Failed to delete memory", Toast.LENGTH_SHORT).show()
-            memoriesAdapter.notifyDataSetChanged() // Restore item in UI
-        }
+        localMemories.removeAll { it.id == memory.id }
+        updateUI(localMemories)
+        Toast.makeText(requireContext(), "Memory deleted", Toast.LENGTH_SHORT).show()
     }
 
     private fun showSnackbar(message: String) {

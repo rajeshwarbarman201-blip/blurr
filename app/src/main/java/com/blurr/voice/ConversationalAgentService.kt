@@ -53,7 +53,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaType
@@ -223,8 +222,7 @@ class ConversationalAgentService : Service() {
             return START_NOT_STICKY
         }
 
-        // Track conversation initiation
-        firebaseAnalytics.logEvent("conversation_initiated", null)
+        // Track conversation initiation locally.
         trackConversationStart()
 
         // Skip greeting and start listening immediately
@@ -242,9 +240,8 @@ class ConversationalAgentService : Service() {
      */
     private fun getPersonalizedGreeting(): String {
         try {
-            val userProfile = UserProfileManager(this@ConversationalAgentService)
             Log.d("ConvAgent", "No name found in memories, using generic greeting")
-            return "Hey ${userProfile.getName()}!"
+            return "Hey there!"
         } catch (e: Exception) {
             Log.e("ConvAgent", "Error getting personalized greeting", e)
             return "Hey!"
@@ -303,13 +300,13 @@ class ConversationalAgentService : Service() {
                     putInt("error_attempt", sttErrorAttempts + 1)
                     putInt("max_attempts", maxSttErrorAttempts)
                 }
-                firebaseAnalytics.logEvent("stt_error", sttErrorBundle)
+                Log.d("ConvAgent", "STT error: ${sttErrorBundle.getString("error_message")}")
                 
                 visualFeedbackManager.hideTranscription()
                 sttErrorAttempts++
                 serviceScope.launch {
                     if (sttErrorAttempts >= maxSttErrorAttempts) {
-                        firebaseAnalytics.logEvent("conversation_ended_stt_errors", null)
+                        Log.d("ConvAgent", "Conversation ended due to repeated STT errors")
                         val exitMessage = "I'm having trouble understanding you clearly. Please try calling later!"
                         trackMessage("model", exitMessage, "error_message")
                         gracefulShutdown(exitMessage, "stt_errors")
@@ -398,13 +395,13 @@ class ConversationalAgentService : Service() {
                     putInt("error_attempt", sttErrorAttempts + 1)
                     putInt("max_attempts", maxSttErrorAttempts)
                 }
-                firebaseAnalytics.logEvent("stt_error", sttErrorBundle)
+                Log.d("ConvAgent", "STT error: ${sttErrorBundle.getString("error_message")}")
                 
                 visualFeedbackManager.hideTranscription()
                 sttErrorAttempts++
                 serviceScope.launch {
                     if (sttErrorAttempts >= maxSttErrorAttempts) {
-                        firebaseAnalytics.logEvent("conversation_ended_stt_errors", null)
+                        Log.d("ConvAgent", "Conversation ended due to repeated STT errors")
                         val exitMessage = "I'm having trouble understanding you clearly. Please try calling later!"
                         trackMessage("model", exitMessage, "error_message")
                         gracefulShutdown(exitMessage, "stt_errors")
@@ -524,11 +521,11 @@ class ConversationalAgentService : Service() {
                 putInt("input_length", userInput.length)
                 putBoolean("is_command", userInput.equals("stop", ignoreCase = true) || userInput.equals("exit", ignoreCase = true))
             }
-            firebaseAnalytics.logEvent("user_input_processed", inputBundle)
+            Log.d("ConvAgent", "User input processed: ${inputBundle.getString("input_type")}")
 
             try {
                 if (userInput.equals("stop", ignoreCase = true) || userInput.equals("exit", ignoreCase = true)) {
-                    firebaseAnalytics.logEvent("conversation_ended_by_command", null)
+                    Log.d("ConvAgent", "Conversation ended by command")
                     trackMessage("model", "Goodbye!", "farewell")
                     gracefulShutdown("Goodbye!", "command")
                     return@launch
@@ -542,15 +539,15 @@ class ConversationalAgentService : Service() {
                 Log.d("TTS_DEBUG", "Reply received from GeminiApi: -->${rawModelResponse}<--")
                 when (decision.type) {
                     "Task" -> {
-                        // Track task request
+                        // Track task request locally
                         val taskBundle = android.os.Bundle().apply {
-                            putString("task_instruction", decision.instruction.take(100)) // Limit length for analytics
+                            putString("task_instruction", decision.instruction.take(100))
                             putBoolean("agent_already_running", AgentService.isRunning)
                         }
-                        firebaseAnalytics.logEvent("task_requested", taskBundle)
+                        Log.d("ConvAgent", "Task requested: ${taskBundle.getString("task_instruction")}")
                         
                         if (AgentService.isRunning) {
-                            firebaseAnalytics.logEvent("task_rejected_agent_busy", null)
+                            Log.d("ConvAgent", "Task rejected because agent is already running")
                             val busyMessage = "I'm already working on '${AgentService.currentTask}'. Please let me finish that first, or you can ask me to stop it."
                             speakAndThenListen(busyMessage)
                             conversationHistory = addResponse("model", busyMessage, conversationHistory)
@@ -582,7 +579,7 @@ class ConversationalAgentService : Service() {
                                         putInt("clarification_attempt", clarificationAttempts + 1)
                                         putInt("questions_count", questions.size)
                                     }
-                                    firebaseAnalytics.logEvent("task_clarification_needed", clarificationBundle)
+                                    Log.d("ConvAgent", "Task clarification needed")
                                     
                                     clarificationAttempts++
                                     displayClarificationQuestions(questions)
@@ -606,7 +603,7 @@ class ConversationalAgentService : Service() {
                                     )
                                     
                                     // Track task execution
-                                    firebaseAnalytics.logEvent("task_executed", taskBundle)
+                                    Log.d("ConvAgent", "Task executed")
                                     
                                     val originalInstruction = decision.instruction
                                     AgentService.start(applicationContext, originalInstruction)
@@ -620,7 +617,7 @@ class ConversationalAgentService : Service() {
                                 )
                                 
                                 // Track max clarification attempts reached
-                                firebaseAnalytics.logEvent("task_executed_max_clarification", taskBundle)
+                                Log.d("ConvAgent", "Task executed after max clarification attempts")
                                 
                                 AgentService.start(applicationContext, decision.instruction)
                                 trackMessage("model", decision.reply, "task_confirmation")
@@ -630,7 +627,7 @@ class ConversationalAgentService : Service() {
                             Log.w("ConvAgent", "User has no tasks remaining. Denying request.")
                             
                             // Track freemium limit reached
-                            firebaseAnalytics.logEvent("task_rejected_freemium_limit", null)
+                            Log.d("ConvAgent", "Task rejected due to freemium limit")
                             
                             val upgradeMessage = "Hey! You've used all your free tasks for the month. Please upgrade in the app to unlock more. We can still talk in voice mode."
                             conversationHistory = addResponse("model", upgradeMessage, conversationHistory)
@@ -645,7 +642,7 @@ class ConversationalAgentService : Service() {
                         val killTaskBundle = android.os.Bundle().apply {
                             putBoolean("task_was_running", AgentService.isRunning)
                         }
-                        firebaseAnalytics.logEvent("kill_task_requested", killTaskBundle)
+                        Log.d("ConvAgent", "Kill task requested")
                         
                         if (AgentService.isRunning) {
                             AgentService.stop(applicationContext)
@@ -663,11 +660,11 @@ class ConversationalAgentService : Service() {
                             putBoolean("conversation_ended", decision.shouldEnd)
                             putInt("reply_length", decision.reply.length)
                         }
-                        firebaseAnalytics.logEvent("conversational_reply", replyBundle)
+                        Log.d("ConvAgent", "Conversational reply generated")
                         
                         if (decision.shouldEnd) {
                             Log.d("ConvAgent", "Model decided to end the conversation.")
-                            firebaseAnalytics.logEvent("conversation_ended_by_model", null)
+                            Log.d("ConvAgent", "Conversation ended by model")
                             trackMessage("model", decision.reply, "farewell")
                             gracefulShutdown(decision.reply, "model_ended")
                         } else {
@@ -689,7 +686,7 @@ class ConversationalAgentService : Service() {
                     putString("error_message", e.message?.take(100) ?: "Unknown error")
                     putString("error_type", e.javaClass.simpleName)
                 }
-                firebaseAnalytics.logEvent("input_processing_error", errorBundle)
+                Log.e("ConvAgent", "Input processing error: ${errorBundle.getString("error_message")}")
                 
                 speakAndThenListen("closing voice mode")
             }
@@ -856,13 +853,13 @@ class ConversationalAgentService : Service() {
 
             // Check if memory is enabled before processing memories
             if (!MEMORY_ENABLED) {
-                var userProfile = UserProfileManager(this@ConversationalAgentService)
+                val userName = "User"
 
                 Log.d("ConvAgent", "Memory is disabled, skipping memory operations")
-                Log.d("ConvAgent", "User name is ${userProfile.getName()}")
+                Log.d("ConvAgent", "User name is $userName")
                 // Replace memory context with disabled message
 
-                updatedPrompt = updatedPrompt.replace("{memory_context}", "User name is ${userProfile.getName()}")
+                updatedPrompt = updatedPrompt.replace("{memory_context}", "User name is $userName")
             } else {
                 // Use cached memories from Firestore
                 if (cachedMemories.isNotEmpty()) {
@@ -1104,7 +1101,7 @@ class ConversationalAgentService : Service() {
             putInt("clarification_attempts", clarificationAttempts)
             putInt("stt_error_attempts", sttErrorAttempts)
         }
-        firebaseAnalytics.logEvent("conversation_ended_gracefully", shutdownBundle)
+        Log.d("ConvAgent", "Conversation ended gracefully")
         
         // Track conversation end in Firebase
 
@@ -1140,7 +1137,7 @@ class ConversationalAgentService : Service() {
             putInt("clarification_attempts", clarificationAttempts)
             putInt("stt_error_attempts", sttErrorAttempts)
         }
-        firebaseAnalytics.logEvent("conversation_ended_instantly", instantShutdownBundle)
+        Log.d("ConvAgent", "Conversation ended instantly")
         
         // Track conversation end in Firebase
         trackConversationEnd("instant")
@@ -1167,115 +1164,31 @@ class ConversationalAgentService : Service() {
     }
 
     /**
-     * Tracks the conversation start in Firebase by creating a new conversation entry.
-     * This method is inspired by AgentService's Firebase operations.
+     * Tracks the conversation start locally.
      */
     private fun trackConversationStart() {
-        val currentUser = auth.currentUser
-        if (currentUser == null) {
-            Log.w("ConvAgent", "Cannot track conversation, user is not logged in.")
-            return
-        }
-
-        // Generate a unique conversation ID
-        conversationId = "${System.currentTimeMillis()}_${currentUser.uid.take(8)}"
-
-        serviceScope.launch {
-            try {
-                val conversationEntry = hashMapOf(
-                    "conversationId" to conversationId,
-                    "startedAt" to Timestamp.now(),
-                    "endedAt" to null,
-                    "messageCount" to 0,
-                    "textModeUsed" to false,
-                    "clarificationAttempts" to 0,
-                    "sttErrorAttempts" to 0,
-                    "endReason" to null, // "graceful", "instant", "command", "model", "stt_errors"
-                    "tasksRequested" to 0,
-                    "tasksExecuted" to 0
-                )
-
-                // Append the conversation to the user's conversationHistory array
-                db.collection("users").document(currentUser.uid)
-                    .update("conversationHistory", FieldValue.arrayUnion(conversationEntry))
-                    .await()
-
-                Log.d("ConvAgent", "Successfully tracked conversation start in Firebase for user ${currentUser.uid}: $conversationId")
-            } catch (e: Exception) {
-                Log.e("ConvAgent", "Failed to track conversation start in Firebase", e)
-                // Don't fail the conversation if Firebase tracking fails
-            }
-        }
+        conversationId = "${System.currentTimeMillis()}"
+        Log.d("ConvAgent", "Tracked conversation start locally: $conversationId")
     }
 
     /**
-     * Tracks individual messages in the conversation.
-     * Fire and forget operation.
+     * Tracks individual messages locally.
      */
     private fun trackMessage(role: String, message: String, messageType: String = "text") {
-        val currentUser = auth.currentUser
-        if (currentUser == null || conversationId == null) {
+        if (conversationId == null) {
             return
         }
-
-        serviceScope.launch {
-            try {
-                val messageEntry = hashMapOf(
-                    "conversationId" to conversationId,
-                    "role" to role, // "user" or "model"
-                    "message" to message.take(500), // Limit message length for storage
-                    "messageType" to messageType, // "text", "task", "clarification"
-                    "timestamp" to Timestamp.now(),
-                    "inputMode" to if (isTextModeActive) "text" else "voice"
-                )
-
-                // Append the message to the user's messageHistory array
-                db.collection("users").document(currentUser.uid)
-                    .update("messageHistory", FieldValue.arrayUnion(messageEntry))
-                    .await()
-
-                Log.d("ConvAgent", "Successfully tracked message in Firebase: $role - ${message.take(50)}...")
-            } catch (e: Exception) {
-                Log.e("ConvAgent", "Failed to track message in Firebase", e)
-            }
-        }
+        Log.d("ConvAgent", "Tracked message locally: $role / $messageType / ${message.take(50)}")
     }
 
     /**
-     * Updates the conversation completion status in Firebase.
-     * Fire and forget operation.
+     * Updates the conversation completion status locally.
      */
     private fun trackConversationEnd(endReason: String, tasksRequested: Int = 0, tasksExecuted: Int = 0) {
-        val currentUser = auth.currentUser
-        if (currentUser == null || conversationId == null) {
+        if (conversationId == null) {
             return
         }
-
-        serviceScope.launch {
-            try {
-                val completionEntry = hashMapOf(
-                    "conversationId" to conversationId,
-                    "endedAt" to Timestamp.now(),
-                    "messageCount" to conversationHistory.size,
-                    "textModeUsed" to isTextModeActive,
-                    "clarificationAttempts" to clarificationAttempts,
-                    "sttErrorAttempts" to sttErrorAttempts,
-                    "endReason" to endReason,
-                    "tasksRequested" to tasksRequested,
-                    "tasksExecuted" to tasksExecuted,
-                    "status" to "completed"
-                )
-
-                // Append the completion status to the user's conversationHistory array
-                db.collection("users").document(currentUser.uid)
-                    .update("conversationHistory", FieldValue.arrayUnion(completionEntry))
-                    .await()
-
-                Log.d("ConvAgent", "Successfully tracked conversation end in Firebase: $conversationId ($endReason)")
-            } catch (e: Exception) {
-                Log.e("ConvAgent", "Failed to track conversation end in Firebase", e)
-            }
-        }
+        Log.d("ConvAgent", "Tracked conversation end locally: $conversationId ($endReason)")
     }
 
     override fun onDestroy() {
@@ -1283,7 +1196,7 @@ class ConversationalAgentService : Service() {
         Log.d("ConvAgent", "Service onDestroy")
         
         overlayManager.stopObserving()
-        firebaseAnalytics.logEvent("conversational_agent_destroyed", null)
+        Log.d("ConvAgent", "Conversational agent destroyed")
         
         // Track conversation end if not already tracked
         if (conversationId != null) {
@@ -1309,56 +1222,12 @@ class ConversationalAgentService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun fetchMemories() {
-        val currentUser = auth.currentUser
-        if (currentUser == null) {
-            Log.w("ConvAgent", "User not logged in, cannot fetch memories")
-            return
-        }
-
-        Log.d("ConvAgent", "Starting async memory fetch for user: ${currentUser.uid}")
-        db.collection("users").document(currentUser.uid)
-            .addSnapshotListener { snapshot, e ->
-                if (e != null) {
-                    Log.w("ConvAgent", "Listen failed.", e)
-                    return@addSnapshotListener
-                }
-
-                if (snapshot != null && snapshot.exists()) {
-                    val memoriesList = snapshot.get("memories") as? List<Map<String, Any>>
-                    if (memoriesList != null) {
-                        cachedMemories = memoriesList.mapNotNull { map ->
-                            try {
-                                UserMemory(
-                                    id = map["id"] as? String ?: "",
-                                    text = map["text"] as? String ?: "",
-                                    source = map["source"] as? String ?: "User",
-                                    createdAt = (map["createdAt"] as? Timestamp)?.toDate() ?: java.util.Date()
-                                )
-                            } catch (e: Exception) {
-                                Log.e("ConvAgent", "Error parsing memory", e)
-                                null
-                            }
-                        }.sortedByDescending { it.createdAt } // Sort by newest first
-                        
-                        Log.d("ConvAgent", "Fetched ${cachedMemories.size} memories from Firestore")
-                    } else {
-                        Log.d("ConvAgent", "No memories field found in user document")
-                        cachedMemories = emptyList()
-                    }
-                } else {
-                    Log.d("ConvAgent", "Current data: null")
-                }
-            }
+        cachedMemories = emptyList()
+        Log.d("ConvAgent", "Using local memories only")
     }
 
     private fun triggerMemoryGeneration() {
-        val currentUser = auth.currentUser
-        val userEmail = currentUser?.email
-
-        if (userEmail == null) {
-            Log.w("ConvAgent", "User email not found, cannot trigger memory generation")
-            return
-        }
+        val userEmail = "local-user"
 
         Log.d("ConvAgent", "Triggering memory generation for email: $userEmail")
 

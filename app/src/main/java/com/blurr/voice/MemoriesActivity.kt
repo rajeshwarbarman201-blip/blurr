@@ -21,11 +21,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.blurr.voice.data.UserMemory
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import java.util.Date
 import java.util.UUID
 
@@ -37,8 +33,7 @@ class MemoriesActivity : AppCompatActivity() {
     private lateinit var memoriesAdapter: MemoriesAdapter
     
     
-    private val db = FirebaseFirestore.getInstance()
-    private val auth = FirebaseAuth.getInstance()
+    private val localMemories = mutableListOf<UserMemory>()
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,47 +124,7 @@ class MemoriesActivity : AppCompatActivity() {
     }
     
     private fun loadMemories() {
-        val user = auth.currentUser
-        if (user == null) {
-            updateUI(emptyList())
-            return
-        }
-
-        val docRef = db.collection("users").document(user.uid)
-        docRef.addSnapshotListener { snapshot, e ->
-            if (e != null) {
-                Log.w("MemoriesActivity", "Listen failed.", e)
-                return@addSnapshotListener
-            }
-
-            if (snapshot != null && snapshot.exists()) {
-                val memoriesList = mutableListOf<UserMemory>()
-                val memoriesData = snapshot.get("memories") as? List<Map<String, Any>>
-                
-                memoriesData?.forEach { map ->
-                    try {
-                        val timestamp = map["createdAt"] as? com.google.firebase.Timestamp
-                        val date = timestamp?.toDate() ?: Date()
-                        
-                        val memory = UserMemory(
-                            id = map["id"] as? String ?: "",
-                            text = map["text"] as? String ?: "",
-                            source = map["source"] as? String ?: "User",
-                            createdAt = date
-                        )
-                        memoriesList.add(memory)
-                    } catch (e: Exception) {
-                        Log.e("MemoriesActivity", "Error parsing memory", e)
-                    }
-                }
-                
-                // Sort by date descending
-                memoriesList.sortByDescending { it.createdAt }
-                updateUI(memoriesList)
-            } else {
-                updateUI(emptyList())
-            }
-        }
+        updateUI(localMemories.sortedByDescending { it.createdAt })
     }
     
     private fun updateUI(memories: List<UserMemory>) {
@@ -230,75 +185,25 @@ class MemoriesActivity : AppCompatActivity() {
     }
     
     private fun addMemory(memoryText: String) {
-        val user = auth.currentUser ?: return
         val newMemory = UserMemory(
             id = UUID.randomUUID().toString(),
             text = memoryText,
             source = "User",
             createdAt = Date()
         )
-        
-        val docRef = db.collection("users").document(user.uid)
-        
-        // We need to convert UserMemory to a Map because Firestore arrayUnion works best with Maps or exact object matches
-        // But since we are using custom objects, we should be careful.
-        // Let's use a Map to be safe and match the structure.
-        
-        val memoryMap = hashMapOf(
-            "id" to newMemory.id,
-            "text" to newMemory.text,
-            "source" to newMemory.source,
-            "createdAt" to newMemory.createdAt
-        )
-
-        docRef.update("memories", FieldValue.arrayUnion(memoryMap))
-            .addOnSuccessListener {
-                Toast.makeText(this, "Memory added", Toast.LENGTH_SHORT).show()
-            }
-            .addOnFailureListener { e ->
-                // If the document doesn't exist or memories field doesn't exist, we might need to set it.
-                // However, users usually exist. If "memories" field is missing, update might fail if we don't use set with merge, 
-                // but arrayUnion usually creates the field if it doesn't exist? 
-                // Actually arrayUnion on a non-existent document fails. But the user document should exist.
-                // If "memories" field is missing, arrayUnion creates it.
-                Log.e("MemoriesActivity", "Error adding memory", e)
-                Toast.makeText(this, "Failed to add memory", Toast.LENGTH_SHORT).show()
-            }
+        localMemories.add(newMemory)
+        localMemories.sortByDescending { it.createdAt }
+        updateUI(localMemories)
+        Toast.makeText(this, "Memory added", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateMemory(oldMemory: UserMemory, newText: String) {
-        val user = auth.currentUser ?: return
-        val docRef = db.collection("users").document(user.uid)
-
-        // To update an item in an array, we have to remove the old one and add the new one.
-        // This is not atomic unless we use a transaction, but for this simple app it's probably fine.
-        // Or we can read the whole array, modify it, and write it back.
-        // Reading and writing back is safer for "edit" to avoid race conditions where we remove but fail to add?
-        // Actually, arrayRemove requires the EXACT object.
-        
-        // Let's try to do it in a transaction or just read-modify-write.
-        
-        db.runTransaction { transaction ->
-            val snapshot = transaction.get(docRef)
-            val memories = snapshot.get("memories") as? MutableList<Map<String, Any>> ?: mutableListOf()
-            
-            // Find the memory with the same ID
-            val index = memories.indexOfFirst { it["id"] == oldMemory.id }
-            if (index != -1) {
-                val newMemoryMap = hashMapOf(
-                    "id" to oldMemory.id,
-                    "text" to newText,
-                    "source" to oldMemory.source,
-                    "createdAt" to oldMemory.createdAt // Keep original creation date
-                )
-                memories[index] = newMemoryMap
-                transaction.update(docRef, "memories", memories)
-            }
-        }.addOnSuccessListener {
+        val index = localMemories.indexOfFirst { it.id == oldMemory.id }
+        if (index != -1) {
+            localMemories[index] = oldMemory.copy(text = newText)
+            localMemories.sortByDescending { it.createdAt }
+            updateUI(localMemories)
             Toast.makeText(this, "Memory updated", Toast.LENGTH_SHORT).show()
-        }.addOnFailureListener { e ->
-            Log.e("MemoriesActivity", "Error updating memory", e)
-            Toast.makeText(this, "Failed to update memory", Toast.LENGTH_SHORT).show()
         }
     }
     
@@ -318,34 +223,9 @@ class MemoriesActivity : AppCompatActivity() {
     }
     
     private fun deleteMemory(memory: UserMemory) {
-        val user = auth.currentUser ?: return
-        val docRef = db.collection("users").document(user.uid)
-        
-        // We need to match the object exactly to remove it via arrayRemove.
-        // But we might have issues with Timestamp precision or other fields.
-        // Safer to read-modify-write.
-        
-        db.runTransaction { transaction ->
-            val snapshot = transaction.get(docRef)
-            val memories = snapshot.get("memories") as? MutableList<Map<String, Any>> ?: mutableListOf()
-            
-            val index = memories.indexOfFirst { it["id"] == memory.id }
-            if (index != -1) {
-                memories.removeAt(index)
-                transaction.update(docRef, "memories", memories)
-            }
-        }.addOnSuccessListener {
-            showSnackbar("Memory deleted", "Undo") {
-                // Undo functionality would require adding it back.
-                // For now, just re-add it?
-                addMemory(memory.text) // This would give it a new ID though if we use the addMemory function.
-                // Let's skip complex undo for now.
-            }
-        }.addOnFailureListener { e ->
-            Log.e("MemoriesActivity", "Error deleting memory", e)
-            Toast.makeText(this, "Failed to delete memory", Toast.LENGTH_SHORT).show()
-            memoriesAdapter.notifyDataSetChanged() // Restore item in UI
-        }
+        localMemories.removeAll { it.id == memory.id }
+        updateUI(localMemories)
+        Toast.makeText(this, "Memory deleted", Toast.LENGTH_SHORT).show()
     }
     
     private fun showSnackbar(message: String, actionText: String, action: () -> Unit) {

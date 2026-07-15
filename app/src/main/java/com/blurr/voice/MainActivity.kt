@@ -39,7 +39,6 @@ import com.blurr.voice.views.DeltaSymbolView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.tasks.await
 import java.io.File
 
 class MainActivity : BaseNavigationActivity() {
@@ -474,25 +473,17 @@ class MainActivity : BaseNavigationActivity() {
         lifecycleScope.launch {
             try {
                 val isSubscribed = freemiumManager.isUserSubscribed()
-                val billingClientReady = MyApplication.isBillingClientReady.value
                 val proBanner = findViewById<View>(R.id.pro_upgrade_banner)
                 if (proBanner == null) {
                     Logger.w("MainActivity", "pro_banner view not found in updateBillingStatus")
                     return@launch
                 }
-                when {
-                    !billingClientReady -> {
-                        proSubscriptionTag.visibility = View.GONE
-                        proBanner.visibility = View.VISIBLE
-                    }
-                    isSubscribed -> {
-                        proSubscriptionTag.visibility = View.VISIBLE
-                        proBanner.visibility = View.GONE
-                    }
-                    else -> {
-                        proSubscriptionTag.visibility = View.GONE
-                        proBanner.visibility = View.VISIBLE
-                    }
+                if (isSubscribed) {
+                    proSubscriptionTag.visibility = View.VISIBLE
+                    proBanner.visibility = View.GONE
+                } else {
+                    proSubscriptionTag.visibility = View.GONE
+                    proBanner.visibility = View.VISIBLE
                 }
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error updating billing status", e)
@@ -546,11 +537,8 @@ class MainActivity : BaseNavigationActivity() {
     private fun performBillingCheck() {
         lifecycleScope.launch {
             try {
-                waitForBillingClientReady()
-                queryAndHandlePurchases()
                 updateTaskCounter()
                 updateBillingStatus()
-                
             } catch (e: Exception) {
                 Logger.e("MainActivity", "Error during billing check", e)
                 updateTaskCounter()
@@ -560,96 +548,6 @@ class MainActivity : BaseNavigationActivity() {
             }
         }
     }
-
-    private suspend fun waitForBillingClientReady() {
-        return withContext(Dispatchers.IO) {
-            var attempts = 0
-            val maxAttempts = 10
-            
-            while (!MyApplication.isBillingClientReady.value && attempts < maxAttempts) {
-                kotlinx.coroutines.delay(500)
-                attempts++
-            }
-            
-            if (!MyApplication.isBillingClientReady.value) {
-                Logger.w("MainActivity", "Billing client not ready after waiting")
-            }
-        }
-    }
-
-    private suspend fun queryAndHandlePurchases() {
-        return withContext(Dispatchers.IO) {
-            if (!MyApplication.isBillingClientReady.value) {
-                Logger.e("MainActivity", "queryPurchases: BillingClient is not ready")
-                return@withContext
-            }
-
-            try {
-                val params = QueryPurchasesParams.newBuilder()
-                    .setProductType(BillingClient.ProductType.SUBS)
-                    .build()
-                
-                Logger.d("MainActivity", "queryPurchases: BillingClient is ready")
-
-                val purchasesResult = MyApplication.billingClient.queryPurchasesAsync(params)
-                val billingResult = purchasesResult.billingResult
-                
-                Logger.d("MainActivity", "queryPurchases: Got billing result: ${billingResult.responseCode}")
-
-                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                    Logger.d("MainActivity", "queryPurchases: Found ${purchasesResult.purchasesList.size} purchases")
-                    purchasesResult.purchasesList.forEach { purchase ->
-                        when (purchase.purchaseState) {
-                            Purchase.PurchaseState.PURCHASED -> {
-                                Logger.d("MainActivity", "Found purchased item: ${purchase.products}")
-                                handlePurchase(purchase)
-                            }
-                            Purchase.PurchaseState.PENDING -> {
-                                Logger.d("MainActivity", "Purchase is pending")
-                            }
-                            else -> {
-                                Logger.d("MainActivity", "Purchase is not in a valid state: ${purchase.purchaseState}")
-                            }
-                        }
-                    }
-                } else {
-                    Logger.e("MainActivity", "Failed to query purchases: ${billingResult.debugMessage}")
-                }
-            } catch (e: Exception) {
-                Logger.e("MainActivity", "Exception during purchase query", e)
-            }
-        }
-    }
-
-    private suspend fun handlePurchase(purchase: Purchase) {
-        return withContext(Dispatchers.IO) {
-            try {
-                if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
-                    if (!purchase.isAcknowledged) {
-                        val acknowledgePurchaseParams = AcknowledgePurchaseParams.newBuilder()
-                            .setPurchaseToken(purchase.purchaseToken)
-                            .build()
-                        
-                        MyApplication.billingClient.acknowledgePurchase(acknowledgePurchaseParams) { billingResult ->
-                            if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                                Logger.d("MainActivity", "Purchase acknowledged: ${purchase.orderId}")
-                                lifecycleScope.launch {
-                                    updateUserToPro()
-                                }
-                            } else {
-                                Logger.e("MainActivity", "Failed to acknowledge purchase: ${billingResult.debugMessage}")
-                            }
-                        }
-                    } else {
-                        updateUserToPro()
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.e("MainActivity", "Error handling purchase", e)
-            }
-        }
-    }
-
 
     private suspend fun updateUserToPro() {
         Logger.d("MainActivity", "Subscription updates are disabled in this local build.")

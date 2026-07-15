@@ -130,9 +130,6 @@ object GeminiApi {
                         responseBody = responseBody,
                         status = "pass",
                     )
-                    logToFirestore(logData)
-
-
                     return parsedResponse
                 }
             } catch (e: Exception) {
@@ -167,8 +164,6 @@ object GeminiApi {
                     responseBody = null,
                     error = e.message
                 )
-                logToFirestore(logData)
-
                 attempts++
                 if (attempts < maxRetry) {
                     val delayTime = 1000L * attempts
@@ -291,29 +286,6 @@ object GeminiApi {
             Log.e("GeminiApi", "Failed to save log to file", e)
         }
     }
-    private fun logToFirestore(logData: Map<String, Any?>) {
-        // Create a unique and descriptive ID from the timestamp and prompt
-        val timestamp = System.currentTimeMillis()
-        val promptSnippet = (logData["prompt"] as? String)?.take(40) ?: "log"
-
-        // Sanitize the prompt snippet to be a valid Firestore document ID
-        // (removes spaces and special characters)
-        val sanitizedPrompt = promptSnippet.replace(Regex("[^a-zA-Z0-9]"), "_")
-
-        val documentId = "${timestamp}_$sanitizedPrompt"
-
-        // Use .document(ID).set(data) instead of .add(data)
-        db.collection("gemini_logs")
-            .document(documentId)
-            .set(logData)
-            .addOnSuccessListener {
-                Log.d("GeminiApi", "Log sent to Firestore with ID: $documentId")
-            }
-            .addOnFailureListener { e ->
-                // This listener is for debugging; it won't block your app's flow
-                Log.e("GeminiApi", "Error sending log to Firestore", e)
-            }
-    }
     private fun createLogEntry(
         attempt: Int,
         modelName: String,
@@ -359,7 +331,7 @@ object GeminiApi {
         error: String? = null
     ): Map<String, Any?> {
         return mapOf(
-            "timestamp" to FieldValue.serverTimestamp(), // Use server time
+            "timestamp" to System.currentTimeMillis(),
             "status" to status,
             "attempt" to attempt,
             "model" to modelName,
